@@ -11,6 +11,8 @@ import (
 	"time"
 )
 
+var reservedChars = []string{"_", "*", "[", "]", "(", ")", "~", "`", ">", "#", "+", "-", "=", "|", "{", "}", ".", "!"}
+
 type Poller struct {
 	db                    *database.Database
 	b                     *tb.Bot
@@ -66,18 +68,29 @@ func (p *Poller) Run() {
 			}
 			entriesToUpdate := make([]int64, entries.Total)
 			for i, entry := range entries.Entries {
-				p.b.Send(
+				_, err := p.b.Send(
 					&telegramUser,
-					fmt.Sprintf("%s: %s\n**%s**", entry.Feed.Category.Title, entry.Feed.Title, entry.Title), &tb.SendOptions{
+					fmt.Sprintf(
+						"%s\n**%s**\n%s",
+						escapeTelegramString(entry.Feed.Title),
+						escapeTelegramString(entry.Title),
+						escapeTelegramString(entry.URL),
+					),
+					&tb.SendOptions{
 						ParseMode: tb.ModeMarkdownV2,
 						ReplyMarkup: &tb.ReplyMarkup{
 							InlineKeyboard: [][]tb.InlineButton{
 								{
-									tb.InlineButton{Text: "Внешняя ссылка", URL: entry.URL},
-									tb.InlineButton{Text: "Ссылка на miniflux", URL: fmt.Sprintf("%s/feed/%d/entry/%d", p.minifluxBaseURL, entry.FeedID, entry.ID)},
+									tb.InlineButton{Text: "Ссылка на miniflux", URL: fmt.Sprintf("%sfeed/%d/entry/%d", p.minifluxBaseURL, entry.FeedID, entry.ID)},
 								},
 							},
-						}})
+						},
+					},
+				)
+				if err != nil {
+					log.Printf("Telegram send error: %v\n", err)
+					continue
+				}
 				entriesToUpdate[i] = entry.ID
 			}
 			err = client.UpdateEntries(entriesToUpdate, miniflux.EntryStatusRead)
@@ -90,4 +103,12 @@ func (p *Poller) Run() {
 		log.Println("Poller cycle ended, waiting...")
 		time.Sleep(time.Duration(p.pollerIntervalSeconds*1000) * time.Millisecond)
 	}
+}
+
+func escapeTelegramString(s string) string {
+	result := s
+	for _, rc := range reservedChars {
+		result = strings.ReplaceAll(result, rc, fmt.Sprintf("\\%s", rc))
+	}
+	return result
 }

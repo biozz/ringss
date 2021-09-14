@@ -10,3 +10,7 @@ tasks:
     cmds:
       - ./bin/ringss
     deps: [build-ringss]
+  env:
+    cmds:
+      - ./bin/ringss -env
+    deps: [build-ringss]

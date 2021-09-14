@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"github.com/biozz/ringss/internal/config"
 	"github.com/biozz/ringss/internal/database"
@@ -18,15 +19,28 @@ import (
 const (
 	Start       = "/start"
 	AddFeed     = "/addfeed"
-	RemoveFeed     = "/removefeed"
+	RemoveFeed  = "/removefeed"
 	Cancel      = "/cancel"
 	KillPoller  = "/killpoller"
 	StartPoller = "/startpoller"
 	Test        = "/test"
+	DB          = "/db"
+)
+
+var (
+	showEnv = flag.Bool("env", false, "Display env vars")
 )
 
 func main() {
+	flag.Parse()
+
 	var c config.EnvConfig
+
+	if *showEnv {
+		envconfig.Usage("", &c)
+		return
+	}
+
 	err := envconfig.Process("", &c)
 	if err != nil {
 		log.Fatal(err.Error())
@@ -55,7 +69,36 @@ func main() {
 	})
 
 	b.Handle(Test, func(m *tb.Message) {
+		fmt.Println(m.Sender.ID)
 		b.Send(m.Sender, "This is a test command, it might do something magical sometimes.")
+	})
+
+	b.Handle(DB, func(m *tb.Message) {
+		if !isAdmin(m.Sender.ID, c.AdminUserIds) {
+			return
+		}
+		parts := strings.Split(m.Text, " ")
+		cmd := parts[1]
+		var result []byte
+		switch cmd {
+		case "get":
+			result, err = db.Raw.Get([]byte(parts[2]))
+		case "put":
+			err = db.Raw.Put([]byte(parts[2]), []byte(parts[3]))
+		case "delete":
+			err = db.Raw.Delete([]byte(parts[2]))
+		default:
+			b.Send(m.Sender, "Invalid command (get, put, delete)")
+		}
+		if err != nil {
+			b.Send(m.Sender, fmt.Sprintf("NOK\n%v", err))
+			return
+		}
+		msg := "OK"
+		if len(result) > 0 {
+			msg += fmt.Sprintf("\n%s", string(result))
+		}
+		b.Send(m.Sender, msg)
 	})
 
 	b.Handle(Cancel, func(m *tb.Message) {
@@ -161,4 +204,13 @@ func main() {
 	go p.Run()
 
 	b.Start()
+}
+
+func isAdmin(userID int, adminUserIDs []int) bool {
+	for _, id := range adminUserIDs {
+		if userID == id {
+			return true
+		}
+	}
+	return false
 }
