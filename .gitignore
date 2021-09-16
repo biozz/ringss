@@ -1,4 +1,5 @@
 .vscode/
 bin/
-vendor/
 db/
+.env
+__debug_bin

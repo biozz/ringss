@@ -2,22 +2,27 @@ package database
 
 import (
 	"fmt"
-	"git.mills.io/prologic/bitcask"
 	"log"
 	"strconv"
+	"strings"
+
+	"github.com/gomodule/redigo/redis"
 )
 
 type Database struct {
-	Raw                          *bitcask.Bitcask
+	Raw                          redis.Conn
 	userStateKeyBuilder          func(int) []byte
 	userMinifluxAPIKeyKeyBuilder func(int) []byte
 	feedKeyBuilder               func(int64) []byte
 }
 
-func New(dbPath string) (*Database, error) {
-	db, _ := bitcask.Open(dbPath)
+func New(dbURL string) (*Database, error) {
+	c, err := redis.DialURL(dbURL)
+	if err != nil {
+		log.Fatalf("Unable to connect to the database: %v", err)
+	}
 	return &Database{
-		Raw: db,
+		Raw: c,
 		userStateKeyBuilder: func(userID int) []byte {
 			return []byte(fmt.Sprintf("user:%d:state", userID))
 		},
@@ -46,15 +51,15 @@ const (
 
 func (d *Database) SetUserState(userID int, state State) {
 	key := d.userStateKeyBuilder(userID)
-	err := d.Raw.Put(key, []byte(state))
+	err := d.Raw.Send("SET", key, state)
 	if err != nil {
-		log.Printf("Unknown db.Put error for user state: %v", err)
+		log.Printf("Unknown SET error for user state: %v", err)
 	}
 }
 
 func (d *Database) GetUserState(userID int) State {
 	key := d.userStateKeyBuilder(userID)
-	state, err := d.Raw.Get(key)
+	state, err := redis.String(d.Raw.Do("GET", key))
 	if err != nil {
 		return StateUnknown
 	}
@@ -63,38 +68,47 @@ func (d *Database) GetUserState(userID int) State {
 
 func (d *Database) ClearUserState(userID int) {
 	key := d.userStateKeyBuilder(userID)
-	err := d.Raw.Delete(key)
+	_, err := redis.Bool(d.Raw.Do("DEL", key))
 	if err != nil {
 		log.Printf("Unknown db.Delete error for user clear state: %v", err)
 	}
 }
 
 func (d *Database) SetPollerEnabled(enabled string) {
-	err := d.Raw.Put([]byte("poller:enabled"), []byte(enabled))
+	result, err := redis.String(d.Raw.Do("SET", "poller:enabled", enabled))
 	if err != nil {
 		log.Printf("Unknown db.Put error for poller state: %v", err)
 	}
+	log.Println(result)
 }
 
 func (d *Database) GetPollerState() string {
-	pollerState, err := d.Raw.Get([]byte("poller:enabled"))
+	state, err := redis.String(d.Raw.Do("GET", "poller:enabled"))
 	if err != nil {
 		log.Printf("Unknown db.Get error for poller state: %v", err)
 	}
-	return string(pollerState)
+	return string(state)
 }
 
-func (d *Database) ScanFeeds(callable func(key []byte) error) {
-	err := d.Raw.Scan([]byte("feed:"), callable)
+func (d *Database) GetKeysWIthPrefix(prefix string) []string {
+	keys, err := redis.Strings(d.Raw.Do("KEYS", "*"))
 	if err != nil {
-		log.Printf("Unknown Scan error for feeds: %v", err)
+		log.Printf("Unknown KEYS error: %v", err)
 	}
+	var result []string
+	for _, key := range keys {
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		result = append(result, key)
+	}
+	return result
 }
 
 func (d *Database) SetFeed(feedID int64, userID int) {
 	key := d.feedKeyBuilder(feedID)
 	value := []byte(strconv.Itoa(userID))
-	err := d.Raw.Put(key, value)
+	_, err := redis.Bool(d.Raw.Do("SET", key, value))
 	if err != nil {
 		log.Printf("Unknown db.Put error for feed: %v", err)
 	}
@@ -102,18 +116,17 @@ func (d *Database) SetFeed(feedID int64, userID int) {
 
 func (d *Database) GetFeed(feedID int64) int {
 	key := d.feedKeyBuilder(feedID)
-	telegramUserIDRaw, _ := d.Raw.Get(key)
-	if telegramUserIDRaw == nil {
+	telegramUserID, _ := redis.Int(d.Raw.Do("GET", key))
+	if telegramUserID == 0 {
 		log.Printf("No telegram user id for feed %d", feedID)
 		return 0
 	}
-	telegramUserID, _ := strconv.Atoi(string(telegramUserIDRaw))
 	return telegramUserID
 }
 
 func (d *Database) ClearFeed(feedID int64) {
 	key := d.feedKeyBuilder(feedID)
-	err := d.Raw.Delete(key)
+	_, err := redis.Bool(d.Raw.Do("DEL", key))
 	if err != nil {
 		log.Printf("Unable to delete feed: %v\n", err)
 	}
@@ -121,18 +134,17 @@ func (d *Database) ClearFeed(feedID int64) {
 
 func (d *Database) GetMinifluxAPIKey(userID int) string {
 	key := d.userMinifluxAPIKeyKeyBuilder(userID)
-	apiKey, err := d.Raw.Get(key)
+	result, err := redis.String(d.Raw.Do("GET", key))
 	if err != nil {
-		log.Printf("Unknown db.Get error for miniflux api key: %v", err)
 		return ""
 	}
-	return string(apiKey)
+	return result
 }
 
 func (d *Database) SetMinifluxAPIKey(userID int, minifluxAPIKey string) {
 	key := d.userMinifluxAPIKeyKeyBuilder(userID)
-	err := d.Raw.Put(key, []byte(minifluxAPIKey))
+	err := d.Raw.Send("SET", key, minifluxAPIKey)
 	if err != nil {
-		log.Printf("Unknown db.Put error for miniflux api key: %v", err)
+		log.Printf("Unknown SET error for miniflux api key: %v", err)
 	}
 }

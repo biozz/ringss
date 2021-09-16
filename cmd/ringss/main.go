@@ -3,13 +3,14 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/biozz/ringss/internal/config"
-	"github.com/biozz/ringss/internal/database"
-	"github.com/biozz/ringss/internal/poller"
 	"log"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/biozz/ringss/internal/config"
+	"github.com/biozz/ringss/internal/database"
+	"github.com/biozz/ringss/internal/poller"
 
 	"github.com/kelseyhightower/envconfig"
 	tb "gopkg.in/tucnak/telebot.v2"
@@ -24,7 +25,6 @@ const (
 	KillPoller  = "/killpoller"
 	StartPoller = "/startpoller"
 	Test        = "/test"
-	DB          = "/db"
 )
 
 var (
@@ -46,7 +46,7 @@ func main() {
 		log.Fatal(err.Error())
 	}
 
-	db, _ := database.New(c.DatabasePath)
+	db, _ := database.New(c.DatabaseURL)
 	defer db.DeferredAction()
 
 	b, err := tb.NewBot(tb.Settings{
@@ -71,34 +71,6 @@ func main() {
 	b.Handle(Test, func(m *tb.Message) {
 		fmt.Println(m.Sender.ID)
 		b.Send(m.Sender, "This is a test command, it might do something magical sometimes.")
-	})
-
-	b.Handle(DB, func(m *tb.Message) {
-		if !isAdmin(m.Sender.ID, c.AdminUserIds) {
-			return
-		}
-		parts := strings.Split(m.Text, " ")
-		cmd := parts[1]
-		var result []byte
-		switch cmd {
-		case "get":
-			result, err = db.Raw.Get([]byte(parts[2]))
-		case "put":
-			err = db.Raw.Put([]byte(parts[2]), []byte(parts[3]))
-		case "delete":
-			err = db.Raw.Delete([]byte(parts[2]))
-		default:
-			b.Send(m.Sender, "Invalid command (get, put, delete)")
-		}
-		if err != nil {
-			b.Send(m.Sender, fmt.Sprintf("NOK\n%v", err))
-			return
-		}
-		msg := "OK"
-		if len(result) > 0 {
-			msg += fmt.Sprintf("\n%s", string(result))
-		}
-		b.Send(m.Sender, msg)
 	})
 
 	b.Handle(Cancel, func(m *tb.Message) {
@@ -204,13 +176,4 @@ func main() {
 	go p.Run()
 
 	b.Start()
-}
-
-func isAdmin(userID int, adminUserIDs []int) bool {
-	for _, id := range adminUserIDs {
-		if userID == id {
-			return true
-		}
-	}
-	return false
 }

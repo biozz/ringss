@@ -1,0 +1,18 @@
+version: '3'
+
+services:
+  app:
+    build: .
+    env_file: .env
+    depends_on:
+      - db
+  db:
+    # original image prologic/bitcask failed for me
+    # https://git.mills.io/prologic/bitcask/issues/235
+    # this is a rebuilt image from master branch
+    image: biozz/bitcask:1.0.0
+    ports:
+      - "6379:6379"
+  # You can also use it with redis
+  # redis:
+  #   image: redis:latest
